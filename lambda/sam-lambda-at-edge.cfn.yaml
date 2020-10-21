@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  redirect-lambda-at-edge
+
+  SAM Template for redirect
+Parameters:
+  ProjectName:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  RedirectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref ProjectName
+      CodeUri: src/redirect/
+      Handler: app.redirect_handler
+      Runtime: python3.7
+      Role: !GetAtt LambdaEdgeFunctionRole.Arn
+      Timeout: 5
+      AutoPublishAlias: live
+  
+  LambdaEdgeFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+        Path: "/"
+        ManagedPolicyArns:
+            - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: "AllowLambdaServiceToAssumeRole"
+              Effect: "Allow"
+              Action:
+                - "sts:AssumeRole"
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+                  - "edgelambda.amazonaws.com"
+
+Outputs:
+  RedirectFunction:
+    Description: "Redirect Lambda Function ARN"
+    Value: !GetAtt RedirectFunction.Arn
+  LambdaEdgeFunctionRole:
+    Description: "IAM Role created for Blog Redirect function"
+    Value: !GetAtt LambdaEdgeFunctionRole.Arn

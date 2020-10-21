@@ -1,0 +1,7 @@
+{
+  "Parameters" : {
+    "ImageVersion" : "{{TAG}}",
+    "VPCStackName" : "{{VPC_STACK_NAME}}",
+    "ClusterStack": "{{APP_STACK_NAME}}"
+    } 
+}

@@ -1,0 +1,340 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  ClusterArn:
+    Type: String
+    Description: ARN of Munger Fargate Task
+    Default: arn:aws:ecs:us-east-2:123456789012:cluster/qa-app
+  TaskName:
+    Type: String
+    Description: Name of Task
+    Default: data-munger
+  ProjectName:
+    Description: Name of Project
+    Type: String
+  CheckSnapshotFunctionArn:
+    Type: String
+    Description: ARN of CheckSnapshotFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-check-snapshot
+  TakeSnapshotFunctionArn:
+    Type: String
+    Description: ARN of TakeSnapshotFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-take-snapshot
+  TakeMungedSnapshotFunctionArn:
+    Type: String
+    Description: ARN of TakeMungedSnapshotFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-take-munged-snapshot
+  RemoveSnapshotFunctionArn:
+    Type: String
+    Description: ARN of RemoveSnapshotFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-remove-snapshot
+  LaunchSnapshotInstanceFunctionArn:
+    Type: String
+    Description: ARN of LaunchSnapshotInstanceFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-launch-instance-from-snapshot
+  UpdateDBSecretFunctionArn:
+    Type: String
+    Description: ARN of UpdateDBSecretFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-update-secret
+  DeleteInstanceFunctionArn:
+    Type: String
+    Description: ARN of DeleteInstanceFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-delete-instance
+  CheckInstanceFunctionArn:
+    Type: String
+    Description: ARN of CheckInstanceFunction
+    Default: arn:aws:lambda:us-east-2:123456789012:function:data-munger-check-instance
+Resources:
+  StepFunction:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      DefinitionString: !Sub |
+        {
+          "StartAt": "CheckPreExistingSnapshot",
+          "States": {
+            "CheckPreExistingSnapshot":{
+              "Next": "CheckPreExistingSnapshotResultChoice",
+              "Type": "Task",
+              "Resource": "${CheckSnapshotFunctionArn}",
+              "InputPath": "$.source_snapshot_id",
+              "ResultPath": "$.CheckPreExistingSnapshotResult"
+            },
+            "Snapshot":{
+              "Next": "WaitIsSnapshotReady",
+              "Type": "Task",
+              "Resource": "${TakeSnapshotFunctionArn}",
+              "ResultPath": "$.IsSnapshotReadyResult"
+            },
+            "IsSnapshotReady":{
+              "Next": "IsSnapshotReadyResultChoice",
+              "Type": "Task",
+              "Resource": "${CheckSnapshotFunctionArn}",
+              "InputPath": "$.source_snapshot_id",
+              "ResultPath": "$.IsSnapshotReadyResult"
+            },
+            "WaitIsSnapshotReady" : {
+              "Type": "Wait",
+              "Seconds": 60,
+              "Next":"IsSnapshotReady" 
+            },
+            "DeleteOldSnapshot":{
+              "Next": "WaitCheckPreExistingSnapshot",
+              "Type": "Task",
+              "Resource": "${RemoveSnapshotFunctionArn}",
+              "InputPath": "$.source_snapshot_id",
+              "ResultPath": "$.DeleteOldSnapshotResult"
+            },
+            "WaitCheckPreExistingSnapshot" : {
+              "Type": "Wait",
+              "Seconds": 60,
+              "Next":"CheckPreExistingSnapshot" 
+            },
+            "UpdateDBSecret":{
+              "Next": "MungeProdData",
+              "Type": "Task",
+              "Resource": "${UpdateDBSecretFunctionArn}",
+              "InputPath": "$.IsInstanceReadyResult.Endpoint.Address",
+              "ResultPath": "$.UpdateDBSecretResult"
+            },
+            "LaunchInstanceFromSnapshot":{
+              "Next": "WaitIsInstanceReady",
+              "Type": "Task",
+              "Resource": "${LaunchSnapshotInstanceFunctionArn}",
+              "ResultPath": "$.LaunchInstanceFromSnapshotResult"
+            },
+            "IsMungedSnapshotReady":{
+              "Next": "IsMungedSnapshotReadyResultChoice",
+              "Type": "Task",
+              "Resource": "${CheckSnapshotFunctionArn}",
+              "InputPath": "$.post_munge_snapshot_id",
+              "ResultPath": "$.IsMungedSnapshotReadyResult"
+            },
+            "WaitIsMungedSnapshotReady" : {
+              "Type": "Wait",
+              "Seconds": 120,
+              "Next":"IsMungedSnapshotReady" 
+            },
+            "DeleteMungedInstance":{
+              "Type":"Task",
+              "End": true,
+              "Resource": "${DeleteInstanceFunctionArn}",
+              "ResultPath": "$.DeleteMungedInstanceResult"
+            },
+            "SnapshotMunged":{
+              "Next": "WaitIsMungedSnapshotReady",
+              "Type": "Task",
+              "Catch": [ {
+                  "ErrorEquals": [ "States.ALL" ],
+                  "Next": "DeleteMungedInstance"
+                } ],
+              "Resource": "${TakeMungedSnapshotFunctionArn}",
+              "ResultPath": "$.SnapshotMungedResult",
+              "InputPath": "$.post_munge_snapshot_id"
+            },
+            "IsInstanceReady":{
+              "Next": "IsInstanceReadyResultChoice",
+              "Type": "Task",
+              "Resource": "${CheckInstanceFunctionArn}",
+              "ResultPath": "$.IsInstanceReadyResult"
+            },
+            "WaitIsInstanceReady" : {
+              "Type": "Wait",
+              "Seconds": 120,
+              "Next":"IsInstanceReady" 
+            },
+            "ErrorState": {
+              "Type": "Fail",
+              "Cause": "Error"
+            },
+            "CheckPreExistingSnapshotResultChoice":{
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CheckPreExistingSnapshotResult",
+                  "StringEquals": "available",
+                  "Next":"DeleteOldSnapshot"
+                },
+                {
+                  "Variable": "$.CheckPreExistingSnapshotResult",
+                  "StringEquals": "not_available",
+                  "Next":"Snapshot"
+                }
+              ],
+              "Default": "ErrorState"
+            },
+            "IsSnapshotReadyResultChoice":{
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.IsSnapshotReadyResult",
+                  "StringEquals": "available",
+                  "Next":"LaunchInstanceFromSnapshot"
+                },
+                {
+                  "Variable": "$.IsSnapshotReadyResult",
+                  "StringEquals": "creating",
+                  "Next": "WaitIsSnapshotReady"
+                }
+              ],
+              "Default": "ErrorState"
+            },
+            "IsMungedSnapshotReadyResultChoice":{
+              "Type": "Choice",
+              "Choices": [
+                {
+                "Or": [
+                    {
+                      "Variable": "$.IsMungedSnapshotReadyResult",
+                      "StringEquals": "creating"
+                    },
+                    {
+                      "Variable": "$.IsMungedSnapshotReadyResult",
+                      "StringEquals": "not_available"
+                    }],
+                    "Next":"WaitIsMungedSnapshotReady"
+                },
+                {
+                  "Variable": "$.IsMungedSnapshotReadyResult",
+                  "StringEquals": "available",
+                  "Next": "DeleteMungedInstance"
+                }
+              ],
+              "Default": "ErrorState"
+            },
+            "IsInstanceReadyResultChoice":{
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Or": [
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "creating"
+                    },
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "configuring-enhanced-monitoring"
+                    },
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "starting"
+                    },
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "pending-apply"
+                    },
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "modifying"
+                    },
+                    {
+                      "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                      "StringEquals": "backing-up"
+                    }],
+                  "Next":"WaitIsInstanceReady"
+                },
+                {
+                  "Variable": "$.IsInstanceReadyResult.DBInstanceStatus",
+                  "StringEquals": "available",
+                  "Next": "UpdateDBSecret"
+                }
+              ],
+              "Default": "ErrorState"
+            },
+            "MungeProdData": {
+              "Type":"Parallel",
+              "Next": "SnapshotMunged",
+              "ResultPath": "$.MungeProdDataResult",
+              "Branches": [
+                {
+                  "StartAt": "IsOldMungedSnapshotPresent",
+                  "States": {
+                    "IsOldMungedSnapshotPresent":{
+                      "Next": "IsOldMungedSnapshotPresentResultChoice",
+                      "Type": "Task",
+                      "Resource": "${CheckSnapshotFunctionArn}",
+                      "InputPath": "$.post_munge_snapshot_id",
+                      "ResultPath": "$.IsMungedSnapshotReadyResult"
+                    },
+                    "RemoveOldMungedSnapshot":{
+                      "End": true,
+                      "Type": "Task",
+                      "Resource": "${RemoveSnapshotFunctionArn}",
+                      "InputPath": "$.post_munge_snapshot_id",
+                      "ResultPath": "$.RemoveMungedSnapshotReadyResult"
+                    },
+                    "ResultSuccessState": {
+                      "Type": "Succeed"
+                    },
+                    "IsOldMungedSnapshotPresentResultChoice":{
+                      "Type": "Choice",
+                      "Choices": [
+                        {
+                          "Variable": "$.IsMungedSnapshotReadyResult",
+                          "StringEquals": "available",
+                          "Next": "RemoveOldMungedSnapshot"
+                        }
+                      ],
+                      "Default": "ResultSuccessState"
+                    }
+                  }
+                },
+                {
+                  "StartAt": "Munge",
+                  "States": {
+                    "Munge": {
+                      "End": true,
+                      "Type": "Task",
+                      "ResultPath": "$.MungeResult",
+                      "Resource": "arn:aws:states:::ecs:runTask.sync",
+                      "Parameters": {
+                        "Cluster": "${ClusterArn}",
+                        "TaskDefinition": "${TaskName}",
+                        "LaunchType": "FARGATE",
+                        "NetworkConfiguration": {
+                          "AwsvpcConfiguration": {
+                            "Subnets": [
+                              "subnet-110a8b6a",
+                              "subnet-7d077d14",
+                              "subnet-9529fed8"
+                            ],
+                            "SecurityGroups": ["sg-e7c9cb8e"],
+                            "AssignPublicIp": "ENABLED"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      RoleArn: !GetAtt StepFunctionRole.Arn
+      StateMachineName: !Sub ${ProjectName}-state-machine
+
+  StepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ['', [!Ref ProjectName, StepFunctionRole]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: StepFunctionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                # Allow the Step Functiion to run ECS task
+                - 'ecs:RunTask'
+                - 'ecs:StopTask'
+                - 'ecs:DescribeTasks'
+                - 'events:PutTargets'
+                - 'events:PutRule'
+                - 'events:DescribeRule'
+                - 'iam:PassRole'
+                - 'lambda:InvokeFunction'
+              Resource: '*'

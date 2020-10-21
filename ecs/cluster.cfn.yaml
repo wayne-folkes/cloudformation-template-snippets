@@ -1,0 +1,19 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This Stack creates the ECS cluster and S3 bucket and policy for a given environment
+
+Resources:
+  Cluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: !Sub ${AWS::StackName}-cluster
+
+Outputs:
+  Cluster:
+    Value: !Ref Cluster
+    Export:
+      Name: !Sub ${AWS::StackName}-cluster
+  ClusterArn:
+    Value: !GetAtt Cluster.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-cluster-arn

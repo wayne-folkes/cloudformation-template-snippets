@@ -1,0 +1,492 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Blue-Green Deployment Pipeline
+Parameters:
+  ProjectName:
+    Description: Name of the Project
+    Type: String
+    Default: blue-green-deployment
+  VPCStackName:
+    Type: String
+  AppStackName:
+    Description: Name of the stack with the ECS apps
+    Type: String
+    Default: wf-test-bg
+Resources:
+  Pipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      Name: !Sub ${AppStackName}-blue-green-deployment-pipeline
+      ArtifactStore:
+        Location: !Sub codepipeline-us-east-2-${AWS::AccountId
+        Type: S3
+      RestartExecutionOnUpdate: true  # Optional
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages:
+        - 
+          Name: S3-Source
+          Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: "1"
+              Configuration:
+                S3Bucket: deploy-bucket
+                S3ObjectKey: !Sub "${AppStackName}/artifact.zip"
+                PollForSourceChanges: false
+              Name: Get-file-from-S3
+              OutputArtifacts:
+                - Name: S3SourceSHAArtifact
+              RunOrder: 1
+        -
+          Name: build-appspec
+          Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref WebCodeBuildProject
+                PrimarySource: S3SourceSHAArtifact
+              InputArtifacts:
+                - Name: "S3SourceSHAArtifact"
+              OutputArtifacts:
+                - Name: "WebAppSpecGenOutput"
+              Name: WebAppSpecGen
+              RunOrder: 2
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref ApiCodeBuildProject
+                PrimarySource: S3SourceSHAArtifact
+              InputArtifacts:
+                - Name: "S3SourceSHAArtifact"
+              OutputArtifacts:
+                - Name: "ApiAppSpecGenOutput"
+              Name: ApiAppSpecGen
+              RunOrder: 2
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref BackgroundServicesCodeBuildProject
+                PrimarySource: S3SourceSHAArtifact
+              InputArtifacts:
+                - Name: "S3SourceSHAArtifact"
+              OutputArtifacts:
+                - Name: "BackgroundServicesAppSpecGenOutput"
+              Name: BackgroundServicesAppSpecGen
+              RunOrder: 2
+        -
+          Name: deploy-apps
+          Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeployToECS
+                Version: "1"
+              Configuration:
+                ApplicationName: !Ref WebCodeDeployApplication
+                DeploymentGroupName: !Sub ${AppStackName}-web-deployment-group
+                Image1ArtifactName: WebAppSpecGenOutput #WebECRSourceArtifact
+                Image1ContainerName: IMAGE1_NAME
+                TaskDefinitionTemplateArtifact: WebAppSpecGenOutput
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: WebAppSpecGenOutput
+                AppSpecTemplatePath: appspec.yaml
+              InputArtifacts:
+                - Name: WebAppSpecGenOutput
+              Name: WebDeploy
+              RunOrder: 5
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeployToECS
+                Version: "1"
+              Configuration:
+                ApplicationName: !Ref ApiCodeDeployApplication
+                DeploymentGroupName: !Sub ${AppStackName}-Api-deployment-group
+                Image1ArtifactName: ApiAppSpecGenOutput
+                Image1ContainerName: IMAGE1_NAME
+                TaskDefinitionTemplateArtifact: ApiAppSpecGenOutput
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: ApiAppSpecGenOutput
+                AppSpecTemplatePath: appspec.yaml
+              InputArtifacts:
+                - Name: ApiAppSpecGenOutput
+              Name: ApiDeploy
+              RunOrder: 4
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub ${AppStackName}-services
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt PipelineCFRole.Arn
+                TemplatePath: BackgroundServicesAppSpecGenOutput::background-services-stack.cfn.yaml
+                TemplateConfiguration: BackgroundServicesAppSpecGenOutput::background-services-stack-config.json
+              InputArtifacts:
+                - Name: BackgroundServicesAppSpecGenOutput
+              Name: ServicesCFDeploy
+              RunOrder: 3
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref ApiMigrationsCodeBuildProject
+                PrimarySource: S3SourceSHAArtifact
+              InputArtifacts:
+                - Name: "S3SourceSHAArtifact"
+              Name: ApiMigrationsCodeBuildProject
+              RunOrder: 2
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Sub ${AppStackName}-migration
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt PipelineCFRole.Arn
+                TemplatePath: BackgroundServicesAppSpecGenOutput::migration-task-stack.cfn.yaml
+                TemplateConfiguration: BackgroundServicesAppSpecGenOutput::migration-stack-config.json
+              InputArtifacts:
+                - Name: BackgroundServicesAppSpecGenOutput
+              Name: MigrationCFDeploy
+              RunOrder: 1
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: 
+              - codepipeline.amazonaws.com
+              - cloudformation.amazonaws.com
+        Version: '2012-10-17'
+      Policies:
+        - PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - "iam:Passrole"
+                - "lambda:Invoke"
+                - "codedeploy:*"
+                - "codedeploy:CreateDeployment"
+                - "codedeploy:GetApplication"
+                - "codedeploy:GetApplicationRevision"
+                - "codedeploy:ListApplicationRevisions"
+                - "codedeploy:RegisterApplicationRevision"
+                - "codedeploy:GetDeployment"
+                - "codedeploy:GetDeploymentConfig"
+                - "elasticloadbalancing:*"
+                - "cloudwatch:*"
+                - "s3:*"
+                - "sns:*"
+                - "cloudformation:*"
+                - "ecs:*"
+                - "codebuild:StartBuild"
+                - "ecr:DescribeImages"
+                - "codebuild:BatchGetBuilds"
+                Effect: Allow
+                Resource: '*'
+          PolicyName: blue-green-pipeline
+
+  PipelineCFRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: 
+              - codepipeline.amazonaws.com
+              - cloudformation.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        - arn:aws:iam::aws:policy/IAMFullAccess
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+
+  WebCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: Generate Web App Spec
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:3.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - 
+            Name: APP_STACK_NAME
+            Value: !Sub ${AppStackName}
+      LogsConfig: 
+        CloudWatchLogs: 
+            GroupName: !Ref LogGroup
+            Status: ENABLED
+      Name: !Sub ${AppStackName}-generate-web-appspec
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        BuildSpec: !Sub >
+          version: 0.2
+          
+          phases:
+            install:
+              commands:
+                - pip install envtpl jq
+            pre_build:
+              commands:
+                - echo -n "$CODEBUILD_LOG_PATH" > /tmp/build_id.out
+            build:
+              commands:
+                - ls $CODEBUILD_SRC_DIR/
+                - cat $CODEBUILD_SRC_DIR/imageDetail.json | jq '.[0]' > /tmp/imageDetail.json 
+                - envtpl < /tmp/taskdef-web.json.j2 > /tmp/taskdef.json
+                - cat /tmp/imageDetail.json
+                - cat /tmp/taskdef.json
+          artifacts:
+            files: 
+              - /tmp/imageDetail.json
+              - /tmp/appspec.yaml
+              - /tmp/taskdef.json
+            discard-paths: yes
+        SourceIdentifier: CodePipeline
+        Type: CODEPIPELINE
+
+  ApiCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: Generate Api App Spec
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:3.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - 
+            Name: APP_STACK_NAME
+            Value: !Sub ${AppStackName}
+      LogsConfig: 
+        CloudWatchLogs: 
+            GroupName: !Ref LogGroup
+            Status: ENABLED
+      Name: !Sub ${AppStackName}-generate-Api-appspec
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        BuildSpec: !Sub >
+          version: 0.2
+          
+          phases:
+            install:
+              commands:
+                - pip install -q envtpl jq
+            pre_build:
+              commands:
+                - echo -n "$CODEBUILD_LOG_PATH" > /tmp/build_id.out
+                - printf "%s:%s" "$REPOSITORY_URI" "$(cat /tmp/build_id.out)" > /tmp/build_tag.out
+                - printf '{"tag":"%s"}' "$(cat /tmp/build_id.out)" > /tmp/build.json
+            build:
+              commands:
+                - ls $CODEBUILD_SRC_DIR/
+                - cat $CODEBUILD_SRC_DIR/*.json
+                - cat $CODEBUILD_SRC_DIR/imageDetail.json | jq '.[0]' | sed 's/web/Api/g' > /tmp/imageDetail.json
+                - envtpl < /tmp/taskdef-Api.json.j2 > /tmp/taskdef.json
+                - cat /tmp/imageDetail.json
+                - cat /tmp/taskdef.json
+          artifacts:
+            files: 
+              - /tmp/imageDetail.json
+              - /tmp/appspec.yaml
+              - /tmp/taskdef.json
+            discard-paths: yes
+        SourceIdentifier: CodePipeline
+        Type: CODEPIPELINE
+
+  ApiMigrationsCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: Run Migrations
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:4.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - 
+            Name: APP_STACK_NAME
+            Value: !Sub ${AppStackName}
+          - 
+            Name: STACK_NAME
+            Value: !Sub ${AppStackName}
+      LogsConfig: 
+        CloudWatchLogs: 
+            GroupName: !Ref LogGroup
+            Status: ENABLED
+      Name: !Sub ${AppStackName}-migrate-Api
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        BuildSpec: !Sub >
+          version: 0.2
+          
+          phases:
+            install:
+              commands:
+                - pip install -q boto3
+            pre_build:
+              commands:
+                - chmod +x $CODEBUILD_SRC_DIR/scripts/start_migrator.py
+                - ls -lah $CODEBUILD_SRC_DIR/scripts
+            build:
+              commands:
+                - codebuild-breakpoint
+                - $CODEBUILD_SRC_DIR/scripts/start_migrator.py
+        SourceIdentifier: CodePipeline
+        Type: CODEPIPELINE
+
+  BackgroundServicesCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: Generate Api Analytics App Spec
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:3.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - 
+            Name: APP_STACK_NAME
+            Value: !Sub ${AppStackName}
+          - 
+            Name: VPC_STACK_NAME
+            Value: !Sub ${VPCStackName}
+      LogsConfig: 
+        CloudWatchLogs: 
+            GroupName: !Ref LogGroup
+            Status: ENABLED
+      Name: !Sub ${AppStackName}-generate-Api-analytics-appspec
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        BuildSpec: !Sub >
+          version: 0.2
+          
+          phases:
+            install:
+              commands:
+                - pip install -q envtpl jq
+            pre_build:
+              commands:
+                - echo -n "$CODEBUILD_LOG_PATH" > /tmp/build_id.out
+                - printf "%s:%s" "$REPOSITORY_URI" "$(cat /tmp/build_id.out)" > /tmp/build_tag.out
+                - printf '{"tag":"%s"}' "$(cat /tmp/build_id.out)" > /tmp/build.json
+            build:
+              commands:
+                - cat $CODEBUILD_SRC_DIR/imageDetail.json
+                - export TAG=$(cat $CODEBUILD_SRC_DIR/imageDetail.json | jq '.[0].ImageURI | split(":") | .[1]' | tr -d \")
+                - echo $TAG
+                - envtpl < /tmp/background-services-stack-config.json.j2 > /tmp/background-services-stack-config.json
+                - envtpl < /tmp/migration-stack-config.json.j2 > /tmp/migration-stack-config.json
+                - cat /tmp/background-services-stack-config.json
+                - cat /tmp/migration-stack-config.json
+          artifacts:
+            files: 
+              - /tmp/background-services-stack.cfn.yaml
+              - /tmp/background-services-stack-config.json
+              - /tmp/migration-task-stack.cfn.yaml
+              - /tmp/migration-stack-config.json
+            discard-paths: yes
+        SourceIdentifier: CodePipeline
+        Type: CODEPIPELINE
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub /builds/${AppStackName}-${ProjectName}
+      RetentionInDays: 7
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - "logs:CreateLogGroup"
+                - "logs:CreateLogStream"
+                - "logs:PutLogEvents"
+                - "s3:PutObject"
+                - "s3:GetObject"
+                - "s3:GetObjectVersion"
+                - "s3:GetBucketAcl"
+                - "s3:ListBucket"
+                - "s3:GetBucketLocation"
+                - "codebuild:CreateReportGroup"
+                - "codebuild:CreateReport"
+                - "codebuild:UpdateReport"
+                - "codebuild:BatchPutTestCases"
+                - "s3:CreateMultipartUpload"
+                - "ssmmessages:CreateControlChannel"
+                - "ssmmessages:CreateDataChannel"
+                - "ssmmessages:OpenControlChannel"
+                - "ssmmessages:OpenDataChannel"
+                - "cloudformation:DescribeStacks"
+                - "cloudformation:ListExports"
+                - "ecr:DescribeImages"
+                - "ecs:RunTask"
+                - "ecs:DescribeTasks"
+                - "iam:PassRole"
+                Effect: Allow
+                Resource: '*'
+
+  WebCodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties: 
+      ApplicationName: !Sub ${AppStackName}-web
+      ComputePlatform: ECS
+
+  ApiCodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties: 
+      ApplicationName: !Sub ${AppStackName}-Api
+      ComputePlatform: ECS

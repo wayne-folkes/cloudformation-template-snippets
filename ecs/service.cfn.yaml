@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Sample ECS Service
+
+Parameters:
+  VPCStackName:
+    Type: String
+  ImageVersion:
+    Type: String
+  ServiceDesiredCount:
+    Type: Number
+    Default: 1
+  ClusterStack:
+    Type: String
+
+Resources:
+  Service:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      ServiceName: !Sub ${AWS::StackName}-service
+      Cluster:
+        Fn::ImportValue:
+          !Sub ${ClusterStack}-cluster
+      DesiredCount: !Ref ServiceDesiredCount
+      TaskDefinition: !Ref AnalyticsIdentifyTaskDefinition
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${VPCStackName}-ECSContainerInstanceSecurityGroup"
+          Subnets:
+            - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet1"
+            - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet2"
+            - Fn::ImportValue: !Sub "${VPCStackName}-PublicSubnet3"
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${AWS::StackName}-analytics-identify-service"
+
+  TaskDefinition:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties:
+      NetworkMode: awsvpc
+      Family: !Sub "${AWS::StackName}-task"
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: "256"
+      Memory: 2GB
+      ContainerDefinitions:
+        - MemoryReservation: !Ref TaskDefinitionMemoryReservationAnalyticsIdentify
+          Memory: !Ref TaskDefinitionMemoryReservationAnalyticsIdentify
+          Name: my-task
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/wayne-folkes/someimage:${ImageVersion}"
+          Command: ["/app/init/run.sh"]
+          Environment:
+            - Name: ENVIRONMENT_NAME
+              Value: !Ref 'ClusterStack'
+            - Name: CURRENT_VERSION
+              Value: !Ref ImageVersion
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: my-service
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${AWS::StackName}-my-task-definition"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-task-execution-role"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-task-role"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/apps/${AWS::StackName}/my-task-log-group"
+      RetentionInDays: 90
+
+Outputs:
+  TaskExecutionRoleArn:
+    Value: !GetAtt TaskExecutionRole.Arn

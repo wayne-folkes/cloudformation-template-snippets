@@ -1,0 +1,49 @@
+
+{
+	"executionRoleArn": "arn:aws:iam::123456789012:role/{{APP_STACK_NAME}}-task-execution-role",
+	"containerDefinitions": [{
+		"logConfiguration": {
+			"logDriver": "awslogs",
+			"options": {
+				"awslogs-group": "/apps/{{APP_STACK_NAME}}/api",
+				"awslogs-region": "us-east-1",
+				"awslogs-stream-prefix": "api"
+			}
+		},
+		"portMappings": [{
+			"hostPort": 8081,
+			"protocol": "tcp",
+			"containerPort": 8081
+		}],
+		"cpu": 0,
+		"environment": [{
+				"name": "CURRENT_VERSION",
+				"value": "latest"
+			},
+			{
+				"name": "ENVIRONMENT_NAME",
+				"value": "{{APP_STACK_NAME}}"
+			},
+			{
+				"name": "SERVICE_NAME",
+				"value": "API"
+			}
+		],
+		"memoryReservation": 128,
+		"image": "<IMAGE1_NAME>",
+		"essential": true,
+		"name": "api"
+	}],
+	"taskRoleArn": "arn:aws:iam::123456789012:role/{{APP_STACK_NAME}}-task-role",
+	"compatibilities": [
+		"EC2",
+		"FARGATE"
+	],
+	"requiresCompatibilities": [
+		"FARGATE"
+	],
+	"networkMode": "awsvpc",
+	"cpu": "256",
+	"memory": "512",
+	"family": "{{APP_STACK_NAME}}-wayne-api"
+}
