@@ -92,6 +92,8 @@ Resources:
               Resource: '*'
   LogGroup:
     Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Properties: 
       LogGroupName: !Ref ProjectName
       RetentionInDays: 7

@@ -103,6 +103,8 @@ Resources:
 
   LogGroup:
     Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Properties:
       LogGroupName: !Sub "/apps/${AWS::StackName}/my-task-log-group"
       RetentionInDays: 90

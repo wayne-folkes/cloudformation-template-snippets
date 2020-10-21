@@ -314,7 +314,7 @@ Resources:
   StepFunctionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Join ['', [!Ref ProjectName, StepFunctionRole]]
+      RoleName: !Sub '${ProjectName}StepFunctionRole'
       AssumeRolePolicyDocument:
         Statement:
           - Effect: Allow

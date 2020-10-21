@@ -250,7 +250,7 @@ Resources:
       Name: !Sub ${AppStackName}-generate-web-appspec
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Source:
-        BuildSpec: !Sub >
+        BuildSpec: >
           version: 0.2
           
           phases:
@@ -299,7 +299,7 @@ Resources:
       Name: !Sub ${AppStackName}-generate-Api-appspec
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Source:
-        BuildSpec: !Sub >
+        BuildSpec: >
           version: 0.2
           
           phases:
@@ -354,7 +354,7 @@ Resources:
       Name: !Sub ${AppStackName}-migrate-Api
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Source:
-        BuildSpec: !Sub >
+        BuildSpec: >
           version: 0.2
           
           phases:
@@ -398,7 +398,7 @@ Resources:
       Name: !Sub ${AppStackName}-generate-Api-analytics-appspec
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Source:
-        BuildSpec: !Sub >
+        BuildSpec: >
           version: 0.2
           
           phases:
