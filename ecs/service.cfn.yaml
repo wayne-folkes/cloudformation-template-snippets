@@ -12,6 +12,9 @@ Parameters:
     Default: 1
   ClusterStack:
     Type: String
+  TaskDefinitionMemoryReservation:
+    Type: String
+    Default: 256
 
 Resources:
   Service:
@@ -22,7 +25,7 @@ Resources:
         Fn::ImportValue:
           !Sub ${ClusterStack}-cluster
       DesiredCount: !Ref ServiceDesiredCount
-      TaskDefinition: !Ref AnalyticsIdentifyTaskDefinition
+      TaskDefinition: !Ref TaskDefinition
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -50,8 +53,8 @@ Resources:
       Cpu: "256"
       Memory: 2GB
       ContainerDefinitions:
-        - MemoryReservation: !Ref TaskDefinitionMemoryReservationAnalyticsIdentify
-          Memory: !Ref TaskDefinitionMemoryReservationAnalyticsIdentify
+        - MemoryReservation: !Ref TaskDefinitionMemoryReservation
+          Memory: !Ref TaskDefinitionMemoryReservation
           Name: my-task
           Image: !Sub "${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/wayne-folkes/someimage:${ImageVersion}"
           Command: ["/app/init/run.sh"]
