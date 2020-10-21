@@ -1,4 +1,4 @@
-# cloudformation-template-snippets 
+# cloudformation-template-snippets
 
 ![super-linter](https://github.com/wayne-folkes/cloudformation-template-snippets/workflows/super-linter/badge.svg)
 
