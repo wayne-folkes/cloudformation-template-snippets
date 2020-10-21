@@ -1,5 +1,5 @@
 # cloudformation-template-snippets 
 
-[![Actions Status](https://github.com/{owner}/{repo}/workflows/{workflow_name}/badge.svg)](https://github.com/{owner}/{repo}/actions)
+![cfn-linter](https://github.com/wayne-folkes/cloudformation-template-snippets/workflows/cfn-linter/badge.svg)
 
 A collection of Cloudformation templates. Useful for grabbing bits and peices for reuse
