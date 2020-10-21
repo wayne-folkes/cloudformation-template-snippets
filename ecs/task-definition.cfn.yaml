@@ -46,7 +46,7 @@ Resources:
   ExecutionRole:
       Type: AWS::IAM::Role
       Properties:
-        RoleName: !Join ['', [!Ref ProjectName, ExecutionRole]]
+        RoleName: !Sub '${ProjectName}ExecutionRole'
         AssumeRolePolicyDocument:
           Statement:
             - Effect: Allow
@@ -67,7 +67,7 @@ Resources:
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Join ['', [!Ref ProjectName, TaskRole]]
+      RoleName: !Sub '${ProjectName}TaskRole'
       AssumeRolePolicyDocument:
         Statement:
           - Effect: Allow

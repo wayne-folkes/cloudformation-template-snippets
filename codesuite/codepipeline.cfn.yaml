@@ -18,7 +18,7 @@ Resources:
     Properties:
       Name: !Sub ${AppStackName}-blue-green-deployment-pipeline
       ArtifactStore:
-        Location: !Sub codepipeline-us-east-2-${AWS::AccountId
+        Location: !Sub codepipeline-us-east-2-${AWS::AccountId}
         Type: S3
       RestartExecutionOnUpdate: true  # Optional
       RoleArn: !GetAtt PipelineRole.Arn
