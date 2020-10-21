@@ -431,6 +431,8 @@ Resources:
 
   LogGroup:
     Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Properties: 
       LogGroupName: !Sub /builds/${AppStackName}-${ProjectName}
       RetentionInDays: 7
